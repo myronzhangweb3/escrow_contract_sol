@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { BridgeContract } from "../target/types/bridge_contract";
-import { PublicKey } from '@solana/web3.js';
+import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
 import * as splToken from '@solana/spl-token';
 import { assert, expect } from "chai";
 
@@ -11,13 +11,11 @@ describe("bridge_contract", () => {
 
   const program = anchor.workspace.BridgeContract as Program<BridgeContract>;
 
-  // token address
-  let mint : PublicKey;
-
-  let payerTokenAccount : PublicKey;
+  let mint: PublicKey;
+  let payerTokenAccount: PublicKey;
   const payer = (provider.wallet as anchor.Wallet).payer;
   const operator = anchor.web3.Keypair.generate();
-
+  const escrowAccount = Keypair.generate();
   const amountToDistribute = new anchor.BN(1);
 
   it("Is initialized!", async () => {
@@ -46,16 +44,17 @@ describe("bridge_contract", () => {
     );
 
     // Call the initialize method
-    const tx = await program.methods.initialize().accounts({
-      tokenAccount: payerTokenAccount
-    }).rpc();
+    const tx = await program.methods.initialize(operator.publicKey).accounts({
+      escrowAccount: escrowAccount.publicKey,
+      authority: payer.publicKey,
+      systemProgram: SystemProgram.programId,
+    }).signers([escrowAccount, payer]).rpc();
     console.log("initialize transaction signature", tx);
 
     // Add further checks to verify initialization (e.g., check the state)
   });
 
   it("Distributes SOL!", async () => {
-    const operator = anchor.web3.Keypair.generate();
     const recipient = anchor.web3.Keypair.generate();
     
     const initialBalance = await program.provider.connection.getBalance(recipient.publicKey);
@@ -63,10 +62,12 @@ describe("bridge_contract", () => {
     const tx = await program.methods.distributeSol(amountToDistribute).accounts({
       sender: payer.publicKey,
       recipient: recipient.publicKey,
-    }).signers([payer]).rpc();
+      escrowAccount: escrowAccount.publicKey,
+      operator: operator.publicKey,
+      systemProgram: SystemProgram.programId,
+    }).signers([operator]).rpc();
     console.log("Distribute SOL transaction signature", tx);
 
-    // After distribution, check the recipient balance to confirm the SOL transfer
     const finalBalance = await program.provider.connection.getBalance(recipient.publicKey);
     console.log("Recipient final balance", finalBalance);
 
@@ -82,28 +83,26 @@ describe("bridge_contract", () => {
       recipientAccount.publicKey
     );
 
-    // Make sure the sender's token account has enough tokens (this step assumes you have USDT or another token ready)
-    // Call the distributeToken method
     const approveTx = await program.methods.authorizeOperatorOnce().accounts({
       sender: payerTokenAccount,
       senderAuthority: payer.publicKey,
+      escrowAccount: escrowAccount.publicKey,
       operator: operator.publicKey,
       tokenProgram: splToken.TOKEN_PROGRAM_ID, 
-    }).signers([payer]).rpc();
+    }).signers([payer, operator]).rpc();
     console.log("authorizeOperatorOnce transaction signature", approveTx);
 
-    // send token to recepient account
     const distributeTokenTx = await program.methods.distributeToken(amountToDistribute).accounts({
       sender: payerTokenAccount,
       recipient: recipientTokenAccount,
+      escrowAccount: escrowAccount.publicKey,
       operator: operator.publicKey,
       tokenProgram: splToken.TOKEN_PROGRAM_ID,
     }).signers([operator]).rpc();
     console.log("Distribute Token transaction signature", distributeTokenTx);
 
-    // check recipient account balance
     const recipientAmount = await splToken.getAccount(provider.connection, recipientTokenAccount);
-    assert.strictEqual(recipientAmount.amount, BigInt(amountToDistribute.toNumber())); // The balance of the sender's account decreased by 100
+    assert.strictEqual(recipientAmount.amount, BigInt(amountToDistribute.toNumber()));
 
     // Add checks here to verify token transfer
   });
