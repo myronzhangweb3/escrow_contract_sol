@@ -86,6 +86,13 @@ pub mod escrow_contract {
             CustomError::UnauthorizedProgram
         );
 
+        // Checking if the operator is authorized
+        require_keys_eq!(
+          escrow_account.operator,
+          ctx.accounts.operator.key(),
+          CustomError::UnauthorizedOperator
+      );
+
         // Transferring the tokens from the sender's account to the recipient
         let cpi_accounts = Transfer {
             from: ctx.accounts.sender_token_account.to_account_info(), // Source token account
