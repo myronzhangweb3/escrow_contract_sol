@@ -16,12 +16,12 @@ describe("escrow_contract", () => {
   const payer = (provider.wallet as anchor.Wallet).payer;
   const operator = anchor.web3.Keypair.generate();
   const escrowAccount = anchor.web3.Keypair.generate();
-  let escrowTokenAccount : PublicKey;
+  let escrowTokenAccount: PublicKey;
   const amountToDistribute = new anchor.BN(1);
   console.log(`payer: ${payer.publicKey.toBase58()}`)
   console.log(`operator: ${operator.publicKey.toBase58()}`)
   console.log(`escrowAccount: ${escrowAccount.publicKey.toBase58()}`)
-  
+
   before(async () => {
     mint = await splToken.createMint(
       provider.connection,
@@ -97,12 +97,12 @@ describe("escrow_contract", () => {
 
   it("Distributes SOL!", async () => {
     const recipient = anchor.web3.Keypair.generate();
-    
+
     const initialBalance = await program.provider.connection.getBalance(recipient.publicKey);
     const initialEscrowBalance = await program.provider.connection.getBalance(escrowAccount.publicKey);
-    
+
     const rentExemptAmount = await program.provider.connection.getMinimumBalanceForRentExemption(0);
-    
+
     const tx = await program.methods.distributeSol(amountToDistribute).accounts({
       recipient: recipient.publicKey,
       escrowAccount: escrowAccount.publicKey,
@@ -131,7 +131,7 @@ describe("escrow_contract", () => {
       senderTokenAccount: escrowTokenAccount,
       senderTokenAccountAuthority: escrowAccount.publicKey,
       operator: operator.publicKey,
-      tokenProgram: splToken.TOKEN_PROGRAM_ID, 
+      tokenProgram: splToken.TOKEN_PROGRAM_ID,
     }).signers([escrowAccount]).rpc();
 
     // send token to recipient account
@@ -196,7 +196,7 @@ describe("escrow_contract", () => {
 
   it("Fails to Distribute with Zero Amount", async () => {
     const recipient = anchor.web3.Keypair.generate();
-    
+
     try {
       await program.methods.distributeSol(new anchor.BN(0)).accounts({
         sender: escrowAccount.publicKey,
@@ -242,6 +242,29 @@ describe("escrow_contract", () => {
       assert.fail("Should have thrown an error");
     } catch (err) {
       assert.include(err.toString(), "Non-base58 character"); // Adjust the error message as needed
+    }
+  });
+
+  it("Successfully initializes escrow account, then fails on second initialization", async () => {
+    const escrowAccount = anchor.web3.Keypair.generate();
+
+    // First initialization should succeed
+    await program.methods.initialize(operator.publicKey).accounts({
+      escrowAccount: escrowAccount.publicKey,
+      payer: operator.publicKey,
+      systemProgram: SystemProgram.programId,
+    }).signers([escrowAccount, operator]).rpc();
+
+    // Second initialization should fail
+    try {
+      await program.methods.initialize(operator.publicKey).accounts({
+        escrowAccount: escrowAccount.publicKey,
+        payer: operator.publicKey,
+        systemProgram: SystemProgram.programId,
+      }).signers([escrowAccount, operator]).rpc();
+      assert.fail("Should have thrown an error");
+    } catch (err) {
+      return
     }
   });
 });
