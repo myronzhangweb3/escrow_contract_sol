@@ -5,7 +5,7 @@ resolution = true
 skip-lint = true
 
 [programs.localnet]
-bridge_contract = "1TetRib49XZYuKBypgVao4JoTSKJYgtmnNCp4P132pp"
+escrow_contract = "1TetRib49XZYuKBypgVao4JoTSKJYgtmnNCp4P132pp"
 
 [registry]
 url = "https://api.apr.dev"

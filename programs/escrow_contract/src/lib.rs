@@ -6,7 +6,7 @@ use anchor_spl::token::{self, SetAuthority, Token, TokenAccount, Transfer};
 declare_id!("1TetRib49XZYuKBypgVao4JoTSKJYgtmnNCp4P132pp");
 
 #[program]
-pub mod bridge_contract {
+pub mod escrow_contract {
     use super::*;
 
     // Function to initialize the escrow account with an operator

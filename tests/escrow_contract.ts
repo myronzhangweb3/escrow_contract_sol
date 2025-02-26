@@ -1,12 +1,12 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { BridgeContract } from "../target/types/bridge_contract";
+import { BridgeContract } from "../target/types/escrow_contract";
 import { PublicKey, SystemProgram } from '@solana/web3.js';
 import * as splToken from '@solana/spl-token';
 import { assert, expect } from "chai";
 import { getAccount } from "@solana/spl-token";
 
-describe("bridge_contract", () => {
+describe("escrow_contract", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
