@@ -127,7 +127,6 @@ describe("bridge_contract", () => {
       operator: operator.publicKey,
       tokenProgram: splToken.TOKEN_PROGRAM_ID, 
     }).signers([escrowAccount]).rpc();
-    console.log("authorizeOperatorOnce transaction signature", approveTx);
 
     // send token to recepient account
     const distributeTokenTx = await program.methods.distributeToken(amountToDistribute).accounts({
@@ -137,7 +136,6 @@ describe("bridge_contract", () => {
       operator: operator.publicKey,
       tokenProgram: splToken.TOKEN_PROGRAM_ID,
     }).signers([operator]).rpc();
-    console.log("Distribute Token transaction signature", distributeTokenTx);
 
     // check recipient account balance
     const recipientAmount = await splToken.getAccount(provider.connection, recipientTokenAccount);
