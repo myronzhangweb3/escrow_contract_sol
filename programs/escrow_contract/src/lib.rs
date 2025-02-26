@@ -14,6 +14,7 @@ pub mod escrow_contract {
         let escrow_account = &mut ctx.accounts.escrow_account;
         // Setting the operator for the escrow account
         escrow_account.operator = operator;
+        escrow_account.allowed_program_id = *ctx.program_id; // Set the allowed program ID
         msg!("Initialized EscrowAccount with operator: {:?}", operator);
         Ok(())
     }
@@ -31,6 +32,13 @@ pub mod escrow_contract {
             CustomError::UnauthorizedOperator
         );
 
+        // Check if the program ID is allowed
+        require_keys_eq!(
+            *ctx.program_id,
+            escrow_account.allowed_program_id,
+            CustomError::UnauthorizedProgram
+        );
+
         let recipient = &ctx.accounts.recipient;
         let mut adjusted_amount = amount;
         if recipient.lamports() == 0 {
@@ -39,16 +47,56 @@ pub mod escrow_contract {
             adjusted_amount =
                 amount + Rent::get()?.minimum_balance(recipient.to_account_info().data_len());
         }
-        
+
         // Transferring the adjusted amount from the escrow account to the recipient
         let mut escrow_lamports = **escrow_account.to_account_info().try_borrow_mut_lamports()?;
         let mut recipient_lamports = **recipient.to_account_info().try_borrow_mut_lamports()?;
-        escrow_lamports = escrow_lamports.checked_sub(adjusted_amount).ok_or(CustomError::InsufficientFunds)?;
-        recipient_lamports = recipient_lamports.checked_add(adjusted_amount).ok_or(CustomError::Overflow)?;
+        escrow_lamports = escrow_lamports
+            .checked_sub(adjusted_amount)
+            .ok_or(CustomError::InsufficientFunds)?;
+        recipient_lamports = recipient_lamports
+            .checked_add(adjusted_amount)
+            .ok_or(CustomError::Overflow)?;
 
         // Performing the transfer operation
         **escrow_account.to_account_info().try_borrow_mut_lamports()? = escrow_lamports;
         **recipient.to_account_info().try_borrow_mut_lamports()? = recipient_lamports;
+
+        Ok(())
+    }
+
+    // Function to distribute SPL tokens to the recipient
+    pub fn distribute_token(ctx: Context<DistributeToken>, amount: u64) -> Result<()> {
+        msg!("Transferring tokens..."); // Logging the token transfer process
+        msg!(
+            "Mint: {}",
+            &ctx.accounts.token_program.to_account_info().key()
+        );
+        msg!(
+            "From Token Address: {}",
+            &ctx.accounts.sender_token_account.key()
+        );
+        msg!("To Token Address: {}", &ctx.accounts.recipient.key());
+
+        // Check if the program ID is allowed
+        let escrow_account = &ctx.accounts.escrow_account;
+        require_keys_eq!(
+            *ctx.program_id,
+            escrow_account.allowed_program_id,
+            CustomError::UnauthorizedProgram
+        );
+
+        // Transferring the tokens from the sender's account to the recipient
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.sender_token_account.to_account_info(), // Source token account
+            to: ctx.accounts.recipient.to_account_info(),              // Destination token account
+            authority: ctx.accounts.operator.to_account_info(), // Operator performing the transfer
+        };
+        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts); // Creating a CPI context
+        token::transfer(cpi_ctx, amount).map_err(|e| {
+            msg!("Token transfer failed: {:?}", e);
+            e
+        })?;
 
         Ok(())
     }
@@ -90,39 +138,11 @@ pub mod escrow_contract {
 
         Ok(())
     }
-
-    // Function to distribute SPL tokens to the recipient
-    pub fn distribute_token(ctx: Context<DistributeToken>, amount: u64) -> Result<()> {
-        msg!("Transferring tokens..."); // Logging the token transfer process
-        msg!(
-            "Mint: {}",
-            &ctx.accounts.token_program.to_account_info().key()
-        );
-        msg!(
-            "From Token Address: {}",
-            &ctx.accounts.sender_token_account.key()
-        );
-        msg!("To Token Address: {}", &ctx.accounts.recipient.key());
-
-        // Transferring the tokens from the sender's account to the recipient
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.sender_token_account.to_account_info(), // Source token account
-            to: ctx.accounts.recipient.to_account_info(),              // Destination token account
-            authority: ctx.accounts.operator.to_account_info(), // Operator performing the transfer
-        };
-        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts); // Creating a CPI context
-        token::transfer(cpi_ctx, amount).map_err(|e| {
-            msg!("Token transfer failed: {:?}", e);
-            e
-        })?;
-
-        Ok(())
-    }
 }
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(init, payer = payer, space = 8 + 32)]
+    #[account(init, payer = payer, space = 8 + 32 + 32)] // Added space for allowed_program_id
     pub escrow_account: Account<'info, EscrowAccount>, // Escrow account to be initialized
     #[account(mut)]
     pub payer: Signer<'info>, // Signer who pays for the account creation
@@ -165,6 +185,7 @@ pub struct DistributeToken<'info> {
 #[account]
 pub struct EscrowAccount {
     pub operator: Pubkey, // Public key of the operator managing the escrow account
+    pub allowed_program_id: Pubkey, // Public key of the allowed program ID
 }
 
 #[error_code]
@@ -173,6 +194,8 @@ pub enum CustomError {
     UnauthorizedOperator,
     #[msg("Invalid amount.")]
     InvalidAmount,
+    #[msg("Unauthorized program.")]
+    UnauthorizedProgram,
     #[msg("InvalidTokenProgram.")]
     InvalidTokenProgram,
     #[msg("InsufficientFunds.")]
