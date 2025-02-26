@@ -99,7 +99,10 @@ describe("escrow_contract", () => {
     const recipient = anchor.web3.Keypair.generate();
     
     const initialBalance = await program.provider.connection.getBalance(recipient.publicKey);
-
+    const initialEscrowBalance = await program.provider.connection.getBalance(escrowAccount.publicKey);
+    
+    const rentExemptAmount = await program.provider.connection.getMinimumBalanceForRentExemption(0);
+    
     const tx = await program.methods.distributeSol(amountToDistribute).accounts({
       recipient: recipient.publicKey,
       escrowAccount: escrowAccount.publicKey,
@@ -108,7 +111,9 @@ describe("escrow_contract", () => {
     }).signers([operator]).rpc();
 
     const finalBalance = await program.provider.connection.getBalance(recipient.publicKey);
-    expect(finalBalance).to.be.greaterThan(initialBalance);
+    const escrowBalance = await program.provider.connection.getBalance(escrowAccount.publicKey);
+    expect(finalBalance).to.equal(initialBalance + amountToDistribute.toNumber() + rentExemptAmount);
+    expect(escrowBalance).to.equal(initialEscrowBalance - amountToDistribute.toNumber() - rentExemptAmount);
   });
 
   it("Distributes Tokens!", async () => {
@@ -119,6 +124,7 @@ describe("escrow_contract", () => {
       mint,
       recipientAccount.publicKey
     );
+    const initialEscrowBalance = await splToken.getAccount(provider.connection, escrowTokenAccount);
 
     const approveTx = await program.methods.authorizeOperatorOnce().accounts({
       escrowAccount: escrowAccount.publicKey,
@@ -128,7 +134,7 @@ describe("escrow_contract", () => {
       tokenProgram: splToken.TOKEN_PROGRAM_ID, 
     }).signers([escrowAccount]).rpc();
 
-    // send token to recepient account
+    // send token to recipient account
     const distributeTokenTx = await program.methods.distributeToken(amountToDistribute).accounts({
       escrowAccount: escrowAccount.publicKey,
       senderTokenAccount: escrowTokenAccount,
@@ -139,8 +145,11 @@ describe("escrow_contract", () => {
 
     // check recipient account balance
     const recipientAmount = await splToken.getAccount(provider.connection, recipientTokenAccount);
-    assert.strictEqual(recipientAmount.amount, BigInt(amountToDistribute.toNumber())); // The balance of the sender's account decreased by 100
+    assert.strictEqual(recipientAmount.amount, BigInt(amountToDistribute.toNumber())); // The balance of the recipient's account should equal the distributed amount
 
+    // Verify that the escrow account balance decreased by amountToDistribute
+    const escrowAccountBalance = await splToken.getAccount(provider.connection, escrowTokenAccount);
+    assert.strictEqual(escrowAccountBalance.amount, initialEscrowBalance.amount - BigInt(amountToDistribute.toNumber())); // The balance of the escrow account decreased by amountToDistribute
   });
 
   it("Fails to Distribute SOL with Unauthorized Operator", async () => {
@@ -199,6 +208,40 @@ describe("escrow_contract", () => {
       assert.fail("Should have thrown an error");
     } catch (err) {
       assert.include(err.toString(), "InvalidAmount");
+    }
+  });
+
+  it("Fails to Distribute SOL to Invalid Recipient Address", async () => {
+    const invalidRecipientAddress = "invalidAddress"; // Invalid address format
+
+    try {
+      await program.methods.distributeSol(new anchor.BN(1000)).accounts({
+        sender: escrowAccount.publicKey,
+        recipient: invalidRecipientAddress,
+        escrowAccount: escrowAccount.publicKey,
+        operator: operator.publicKey,
+        systemProgram: SystemProgram.programId,
+      }).signers([operator]).rpc();
+      assert.fail("Should have thrown an error");
+    } catch (err) {
+      assert.include(err.toString(), "Non-base58 character"); // Adjust the error message as needed
+    }
+  });
+
+  it("Fails to Distribute Tokens to Invalid Recipient Address", async () => {
+    const invalidRecipientAddress = "invalidAddress"; // Invalid address format
+
+    try {
+      await program.methods.distributeToken(amountToDistribute).accounts({
+        senderTokenAccount: escrowTokenAccount,
+        recipient: invalidRecipientAddress,
+        escrowAccount: escrowAccount.publicKey,
+        operator: operator.publicKey,
+        tokenProgram: splToken.TOKEN_PROGRAM_ID,
+      }).signers([operator]).rpc();
+      assert.fail("Should have thrown an error");
+    } catch (err) {
+      assert.include(err.toString(), "Non-base58 character"); // Adjust the error message as needed
     }
   });
 });

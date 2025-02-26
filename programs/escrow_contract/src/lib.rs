@@ -39,10 +39,16 @@ pub mod escrow_contract {
             adjusted_amount =
                 amount + Rent::get()?.minimum_balance(recipient.to_account_info().data_len());
         }
-
+        
         // Transferring the adjusted amount from the escrow account to the recipient
-        **escrow_account.to_account_info().try_borrow_mut_lamports()? -= adjusted_amount;
-        **recipient.to_account_info().try_borrow_mut_lamports()? += adjusted_amount;
+        let mut escrow_lamports = **escrow_account.to_account_info().try_borrow_mut_lamports()?;
+        let mut recipient_lamports = **recipient.to_account_info().try_borrow_mut_lamports()?;
+        escrow_lamports = escrow_lamports.checked_sub(adjusted_amount).ok_or(CustomError::InsufficientFunds)?;
+        recipient_lamports = recipient_lamports.checked_add(adjusted_amount).ok_or(CustomError::Overflow)?;
+
+        // Performing the transfer operation
+        **escrow_account.to_account_info().try_borrow_mut_lamports()? = escrow_lamports;
+        **recipient.to_account_info().try_borrow_mut_lamports()? = recipient_lamports;
 
         Ok(())
     }
@@ -76,7 +82,11 @@ pub mod escrow_contract {
             cpi_ctx,
             AuthorityType::AccountOwner,
             Some(ctx.accounts.operator.key()), // New authority (operator)
-        )?;
+        )
+        .map_err(|e| {
+            msg!("Token transfer failed: {:?}", e);
+            e
+        })?;
 
         Ok(())
     }
@@ -101,7 +111,10 @@ pub mod escrow_contract {
             authority: ctx.accounts.operator.to_account_info(), // Operator performing the transfer
         };
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts); // Creating a CPI context
-        token::transfer(cpi_ctx, amount)?;
+        token::transfer(cpi_ctx, amount).map_err(|e| {
+            msg!("Token transfer failed: {:?}", e);
+            e
+        })?;
 
         Ok(())
     }
@@ -162,4 +175,8 @@ pub enum CustomError {
     InvalidAmount,
     #[msg("InvalidTokenProgram.")]
     InvalidTokenProgram,
+    #[msg("InsufficientFunds.")]
+    InsufficientFunds,
+    #[msg("Overflow.")]
+    Overflow,
 }
