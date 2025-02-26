@@ -46,17 +46,20 @@ pub mod bridge_contract {
         );
         msg!(
             "Sender Token Account Address: {}",
-            &ctx.accounts.sender.key()
+            &ctx.accounts.sender_token_account.key()
         );
         msg!(
             "sender_authority Address: {}",
-            &ctx.accounts.sender_authority.key()
+            &ctx.accounts.sender_token_account_authority.key()
         );
 
         // Set the operator as the authority of the sender's token account
         let cpi_accounts = SetAuthority {
-            account_or_mint: ctx.accounts.sender.to_account_info(),
-            current_authority: ctx.accounts.sender_authority.to_account_info(), // Operator is the current authority
+            account_or_mint: ctx.accounts.sender_token_account.to_account_info(),
+            current_authority: ctx
+                .accounts
+                .sender_token_account_authority
+                .to_account_info(), // Operator is the current authority
         };
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::set_authority(
@@ -75,12 +78,15 @@ pub mod bridge_contract {
             "Mint: {}",
             &ctx.accounts.token_program.to_account_info().key()
         );
-        msg!("From Token Address: {}", &ctx.accounts.sender.key());
+        msg!(
+            "From Token Address: {}",
+            &ctx.accounts.sender_token_account.key()
+        );
         msg!("To Token Address: {}", &ctx.accounts.recipient.key());
 
         // Now transfer the tokens from the sender's account to the recipient
         let cpi_accounts = Transfer {
-            from: ctx.accounts.sender.to_account_info(),
+            from: ctx.accounts.sender_token_account.to_account_info(),
             to: ctx.accounts.recipient.to_account_info(),
             authority: ctx.accounts.operator.to_account_info(), // Operator performs the transfer
         };
@@ -102,24 +108,22 @@ pub struct Initialize<'info> {
 
 #[derive(Accounts)]
 pub struct AuthorizeToken<'info> {
-    // Sender's account holding the token to distribute
-    #[account(mut)] // Ensure the token account is owned by the Token program
-    pub sender: AccountInfo<'info>, // Sender's token account
-    pub sender_authority: Signer<'info>,
-    // Operator authorized to carry out the distribution
-    pub operator: AccountInfo<'info>, // Operator is the signer for the transaction
-    // The token program responsible for the transfer
-    pub token_program: Program<'info, Token>, // Token program
+    #[account(mut, has_one = operator)]
+    pub escrow_account: Account<'info, EscrowAccount>,
+    #[account(mut)]
+    pub sender_token_account: AccountInfo<'info>,
+    pub sender_token_account_authority: Signer<'info>,
+    pub operator: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
 pub struct DistributeSol<'info> {
-    #[account(mut)]
-    pub recipient: AccountInfo<'info>,
     #[account(mut, has_one = operator)]
     pub escrow_account: Account<'info, EscrowAccount>,
     pub operator: Signer<'info>,
-    pub escrow_account_auth: Signer<'info>,
+    #[account(mut)]
+    pub recipient: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -127,16 +131,12 @@ pub struct DistributeSol<'info> {
 pub struct DistributeToken<'info> {
     #[account(mut, has_one = operator)]
     pub escrow_account: Account<'info, EscrowAccount>,
-    // Sender's account holding the token to distribute
-    #[account(mut, owner = token::ID)] // Ensure the token account is owned by the Token program
-    pub sender: Account<'info, TokenAccount>, // Sender's token account
-    // Recipient's account to receive the distributed token
-    #[account(mut, owner = token::ID)] // Ensure the token account is owned by the Token program
-    pub recipient: Account<'info, TokenAccount>, // Recipient's token account
-    // Operator authorized to carry out the distribution
-    pub operator: Signer<'info>, // Operator is the signer for the transaction
-    // The token program responsible for the transfer
-    pub token_program: Program<'info, Token>, // Token program
+    pub operator: Signer<'info>,
+    #[account(mut, owner = token::ID)]
+    pub sender_token_account: Account<'info, TokenAccount>,
+    #[account(mut, owner = token::ID)]
+    pub recipient: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[account]

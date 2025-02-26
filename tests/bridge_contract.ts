@@ -121,8 +121,9 @@ describe("bridge_contract", () => {
     );
 
     const approveTx = await program.methods.authorizeOperatorOnce().accounts({
-      sender: escrowTokenAccount,
-      senderAuthority: escrowAccount.publicKey,
+      escrowAccount: escrowAccount.publicKey,
+      senderTokenAccount: escrowTokenAccount,
+      senderTokenAccountAuthority: escrowAccount.publicKey,
       operator: operator.publicKey,
       tokenProgram: splToken.TOKEN_PROGRAM_ID, 
     }).signers([escrowAccount]).rpc();
@@ -131,7 +132,7 @@ describe("bridge_contract", () => {
     // send token to recepient account
     const distributeTokenTx = await program.methods.distributeToken(amountToDistribute).accounts({
       escrowAccount: escrowAccount.publicKey,
-      sender: escrowTokenAccount,
+      senderTokenAccount: escrowTokenAccount,
       recipient: recipientTokenAccount,
       operator: operator.publicKey,
       tokenProgram: splToken.TOKEN_PROGRAM_ID,
@@ -174,7 +175,7 @@ describe("bridge_contract", () => {
 
     try {
       await program.methods.distributeToken(amountToDistribute).accounts({
-        sender: escrowTokenAccount,
+        senderTokenAccount: escrowTokenAccount,
         recipient: recipientTokenAccount,
         escrowAccount: escrowAccount.publicKey,
         operator: unauthorizedOperator.publicKey,
