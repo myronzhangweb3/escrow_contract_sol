@@ -1,9 +1,10 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { BridgeContract } from "../target/types/bridge_contract";
-import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
+import { PublicKey, SystemProgram } from '@solana/web3.js';
 import * as splToken from '@solana/spl-token';
 import { assert, expect } from "chai";
+import { getAccount } from "@solana/spl-token";
 
 describe("bridge_contract", () => {
   const provider = anchor.AnchorProvider.env();
@@ -12,13 +13,16 @@ describe("bridge_contract", () => {
   const program = anchor.workspace.BridgeContract as Program<BridgeContract>;
 
   let mint: PublicKey;
-  let payerTokenAccount: PublicKey;
   const payer = (provider.wallet as anchor.Wallet).payer;
   const operator = anchor.web3.Keypair.generate();
-  const escrowAccount = Keypair.generate();
+  const escrowAccount = anchor.web3.Keypair.generate();
+  let escrowTokenAccount : PublicKey;
   const amountToDistribute = new anchor.BN(1);
-
-  it("Is initialized!", async () => {
+  console.log(`payer: ${payer.publicKey.toBase58()}`)
+  console.log(`operator: ${operator.publicKey.toBase58()}`)
+  console.log(`escrowAccount: ${escrowAccount.publicKey.toBase58()}`)
+  
+  before(async () => {
     mint = await splToken.createMint(
       provider.connection,
       payer,
@@ -27,31 +31,68 @@ describe("bridge_contract", () => {
       6
     );
 
-    payerTokenAccount = await splToken.createAssociatedTokenAccount(
+    escrowTokenAccount = await splToken.createAssociatedTokenAccount(
       provider.connection,
       payer,
       mint,
-      provider.wallet.publicKey
+      escrowAccount.publicKey
     );
 
     await splToken.mintTo(
       provider.connection,
       payer,
       mint,
-      payerTokenAccount,
+      escrowTokenAccount,
       payer,
       1000
     );
+    const recipientAmount = await splToken.getAccount(provider.connection, escrowTokenAccount);
+    console.log(`recipient address token balance: ${recipientAmount.amount}`)
 
-    // Call the initialize method
-    const tx = await program.methods.initialize(operator.publicKey).accounts({
+    // Transfer SOL with rent exemption
+    const rentExemptAmount = await provider.connection.getMinimumBalanceForRentExemption(0);
+    const solTransferTxToOperator = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: operator.publicKey,
+        lamports: rentExemptAmount,
+      })
+    );
+    await provider.sendAndConfirm(solTransferTxToOperator, [payer]);
+
+    const solTransferTxToOperator2 = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: operator.publicKey,
+        lamports: amountToDistribute.mul(new anchor.BN(100000000000)).toNumber(),
+      })
+    );
+    await provider.sendAndConfirm(solTransferTxToOperator2, [payer]);
+    console.log(`operator sol balance: ${await program.provider.connection.getBalance(operator.publicKey)}`)
+    const solTransferTxToEscrowAccount = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: escrowAccount.publicKey,
+        lamports: rentExemptAmount,
+      })
+    );
+    await provider.sendAndConfirm(solTransferTxToEscrowAccount, [payer]);
+    const solTransferTxToEscrowAccount2 = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: escrowAccount.publicKey,
+        lamports: amountToDistribute.mul(new anchor.BN(100000000000)).toNumber(),
+      })
+    );
+    await provider.sendAndConfirm(solTransferTxToEscrowAccount2, [payer]);
+    console.log(`escrowAccount sol balance: ${await program.provider.connection.getBalance(escrowAccount.publicKey)}`)
+
+    await program.methods.initialize(operator.publicKey).accounts({
       escrowAccount: escrowAccount.publicKey,
       authority: payer.publicKey,
       systemProgram: SystemProgram.programId,
     }).signers([escrowAccount, payer]).rpc();
-    console.log("initialize transaction signature", tx);
 
-    // Add further checks to verify initialization (e.g., check the state)
   });
 
   it("Distributes SOL!", async () => {
@@ -60,17 +101,13 @@ describe("bridge_contract", () => {
     const initialBalance = await program.provider.connection.getBalance(recipient.publicKey);
 
     const tx = await program.methods.distributeSol(amountToDistribute).accounts({
-      sender: payer.publicKey,
       recipient: recipient.publicKey,
       escrowAccount: escrowAccount.publicKey,
       operator: operator.publicKey,
       systemProgram: SystemProgram.programId,
     }).signers([operator]).rpc();
-    console.log("Distribute SOL transaction signature", tx);
 
     const finalBalance = await program.provider.connection.getBalance(recipient.publicKey);
-    console.log("Recipient final balance", finalBalance);
-
     expect(finalBalance).to.be.greaterThan(initialBalance);
   });
 
@@ -84,26 +121,85 @@ describe("bridge_contract", () => {
     );
 
     const approveTx = await program.methods.authorizeOperatorOnce().accounts({
-      sender: payerTokenAccount,
-      senderAuthority: payer.publicKey,
-      escrowAccount: escrowAccount.publicKey,
+      sender: escrowTokenAccount,
+      senderAuthority: escrowAccount.publicKey,
       operator: operator.publicKey,
       tokenProgram: splToken.TOKEN_PROGRAM_ID, 
-    }).signers([payer, operator]).rpc();
+    }).signers([escrowAccount]).rpc();
     console.log("authorizeOperatorOnce transaction signature", approveTx);
 
+    // send token to recepient account
     const distributeTokenTx = await program.methods.distributeToken(amountToDistribute).accounts({
-      sender: payerTokenAccount,
-      recipient: recipientTokenAccount,
       escrowAccount: escrowAccount.publicKey,
+      sender: escrowTokenAccount,
+      recipient: recipientTokenAccount,
       operator: operator.publicKey,
       tokenProgram: splToken.TOKEN_PROGRAM_ID,
     }).signers([operator]).rpc();
     console.log("Distribute Token transaction signature", distributeTokenTx);
 
+    // check recipient account balance
     const recipientAmount = await splToken.getAccount(provider.connection, recipientTokenAccount);
-    assert.strictEqual(recipientAmount.amount, BigInt(amountToDistribute.toNumber()));
+    assert.strictEqual(recipientAmount.amount, BigInt(amountToDistribute.toNumber())); // The balance of the sender's account decreased by 100
 
-    // Add checks here to verify token transfer
+  });
+
+  it("Fails to Distribute SOL with Unauthorized Operator", async () => {
+    const recipient = anchor.web3.Keypair.generate();
+    const unauthorizedOperator = anchor.web3.Keypair.generate();
+
+    try {
+      await program.methods.distributeSol(amountToDistribute).accounts({
+        sender: escrowAccount.publicKey,
+        recipient: recipient.publicKey,
+        escrowAccount: escrowAccount.publicKey,
+        operator: unauthorizedOperator.publicKey,
+        systemProgram: SystemProgram.programId,
+      }).signers([unauthorizedOperator]).rpc();
+      assert.fail("Should have thrown an error");
+    } catch (err) {
+      assert.include(err.toString(), "ConstraintHasOne");
+    }
+  });
+
+  it("Fails to Distribute Tokens with Unauthorized Operator", async () => {
+    const recipientAccount = anchor.web3.Keypair.generate();
+    const recipientTokenAccount = await splToken.createAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      mint,
+      recipientAccount.publicKey
+    );
+    const unauthorizedOperator = anchor.web3.Keypair.generate();
+
+    try {
+      await program.methods.distributeToken(amountToDistribute).accounts({
+        sender: escrowTokenAccount,
+        recipient: recipientTokenAccount,
+        escrowAccount: escrowAccount.publicKey,
+        operator: unauthorizedOperator.publicKey,
+        tokenProgram: splToken.TOKEN_PROGRAM_ID,
+      }).signers([unauthorizedOperator]).rpc();
+      assert.fail("Should have thrown an error");
+    } catch (err) {
+      assert.include(err.toString(), "ConstraintHasOne");
+    }
+  });
+
+  it("Fails to Distribute with Zero Amount", async () => {
+    const recipient = anchor.web3.Keypair.generate();
+    
+    try {
+      await program.methods.distributeSol(new anchor.BN(0)).accounts({
+        sender: escrowAccount.publicKey,
+        recipient: recipient.publicKey,
+        escrowAccount: escrowAccount.publicKey,
+        operator: operator.publicKey,
+        systemProgram: SystemProgram.programId,
+      }).signers([operator]).rpc();
+      assert.fail("Should have thrown an error");
+    } catch (err) {
+      assert.include(err.toString(), "InvalidAmount");
+    }
   });
 });
