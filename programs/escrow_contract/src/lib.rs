@@ -1,3 +1,7 @@
+pub mod state;
+
+use crate::state::CustomError;
+use crate::state::EscrowAccount;
 use anchor_lang::prelude::*;
 use anchor_spl::token::spl_token::instruction::AuthorityType;
 use anchor_spl::token::{self, SetAuthority, Token, TokenAccount, Transfer};
@@ -7,6 +11,7 @@ declare_id!("1TetRib49XZYuKBypgVao4JoTSKJYgtmnNCp4P132pp");
 
 #[program]
 pub mod escrow_contract {
+
     use super::*;
 
     // Function to initialize the escrow account with an operator
@@ -88,10 +93,10 @@ pub mod escrow_contract {
 
         // Checking if the operator is authorized
         require_keys_eq!(
-          escrow_account.operator,
-          ctx.accounts.operator.key(),
-          CustomError::UnauthorizedOperator
-      );
+            escrow_account.operator,
+            ctx.accounts.operator.key(),
+            CustomError::UnauthorizedOperator
+        );
 
         // Transferring the tokens from the sender's account to the recipient
         let cpi_accounts = Transfer {
@@ -187,26 +192,4 @@ pub struct DistributeToken<'info> {
     #[account(mut, owner = token::ID)]
     pub recipient: Account<'info, TokenAccount>, // Recipient token account
     pub token_program: Program<'info, Token>, // Token program for token operations
-}
-
-#[account]
-pub struct EscrowAccount {
-    pub operator: Pubkey, // Public key of the operator managing the escrow account
-    pub allowed_program_id: Pubkey, // Public key of the allowed program ID
-}
-
-#[error_code]
-pub enum CustomError {
-    #[msg("Unauthorized operator.")]
-    UnauthorizedOperator,
-    #[msg("Invalid amount.")]
-    InvalidAmount,
-    #[msg("Unauthorized program.")]
-    UnauthorizedProgram,
-    #[msg("InvalidTokenProgram.")]
-    InvalidTokenProgram,
-    #[msg("InsufficientFunds.")]
-    InsufficientFunds,
-    #[msg("Overflow.")]
-    Overflow,
 }
